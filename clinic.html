@@ -444,150 +444,179 @@
 </main>
 
 <script>
-  const chatBox   = document.getElementById('chat-box');
-  const input     = document.getElementById('user-input');
-  const sendBtn   = document.getElementById('send-btn');
-  const micBtn    = document.getElementById('mic-btn');
-  const audioWave = document.getElementById('audio-wave');
+  // 🔥 AUTO BASE URL (NO MORE LOCALHOST ISSUES)
+const BASE_URL = window.location.origin;
 
-  let sessionId = null;
-  let isPlaying = false;
-  let mediaRec  = null;
-  let audioCtx  = null;
+const chatBox   = document.getElementById('chat-box');
+const input     = document.getElementById('user-input');
+const sendBtn   = document.getElementById('send-btn');
+const micBtn    = document.getElementById('mic-btn');
+const audioWave = document.getElementById('audio-wave');
 
-  // ── RENDER MESSAGE ──────────────────────────────────────────────────────────
-  function addMsg(text, role) {
-    const wrap = document.createElement('div');
-    wrap.className = `msg ${role}`;
-    const label = document.createElement('div');
-    label.className = 'msg-label';
-    label.textContent = role === 'agent' ? 'Apollo Agent' : 'You';
-    const body = document.createElement('div');
-    body.textContent = text;
-    wrap.appendChild(label);
-    wrap.appendChild(body);
-    chatBox.appendChild(wrap);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  }
+let sessionId = null;
+let isPlaying = false;
 
-  function showTyping() {
-    const t = document.createElement('div');
-    t.className = 'typing'; t.id = 'typing';
-    t.innerHTML = '<span></span><span></span><span></span>';
-    chatBox.appendChild(t);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  }
-  function hideTyping() {
-    const t = document.getElementById('typing');
-    if (t) t.remove();
-  }
 
-  // ── SPEAK (Deepgram TTS) ────────────────────────────────────────────────────
-  async function speakText(text) {
-    try {
-      const res = await fetch('/speak', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      if (!res.ok) return;
-      const blob   = await res.blob();
-      const url    = URL.createObjectURL(blob);
-      const audio  = new Audio(url);
-      isPlaying = true;
-      audio.onended = () => { isPlaying = false; URL.revokeObjectURL(url); };
-      audio.play();
-    } catch(e) { console.warn('TTS error', e); }
-  }
+// ── MESSAGE UI ──
+function addMsg(text, role) {
+  const wrap = document.createElement('div');
+  wrap.className = `msg ${role}`;
 
-  // ── SEND MESSAGE ────────────────────────────────────────────────────────────
-  async function sendMessage(text) {
-    if (!text.trim()) return;
-    addMsg(text, 'user');
-    input.value = '';
-    showTyping();
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = role === 'agent' ? 'Apollo Agent' : 'You';
 
-    try {
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, session_id: sessionId })
-      });
-      const data = await res.json();
-      sessionId = data.session_id;
-      hideTyping();
-      addMsg(data.response, 'agent');
-      speakText(data.response);
-    } catch(e) {
-      hideTyping();
-      addMsg('Sorry, there was a connection issue. Please try again.', 'agent');
-    }
-  }
+  const body = document.createElement('div');
+  body.textContent = text;
 
-  // ── MIC (Web Speech API fallback) ───────────────────────────────────────────
-  let recognition = null;
-  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SR();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-IN';
+  wrap.appendChild(label);
+  wrap.appendChild(body);
+  chatBox.appendChild(wrap);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
 
-    recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      input.value = transcript;
-      sendMessage(transcript);
+function showTyping() {
+  const t = document.createElement('div');
+  t.className = 'typing';
+  t.id = 'typing';
+  t.innerHTML = '<span></span><span></span><span></span>';
+  chatBox.appendChild(t);
+}
+
+function hideTyping() {
+  const t = document.getElementById('typing');
+  if (t) t.remove();
+}
+
+
+// ── SPEAK (FIXED) ──
+async function speakText(text) {
+  try {
+    const res = await fetch(`${BASE_URL}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+
+    if (!res.ok) return;
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const audio = new Audio(url);
+    isPlaying = true;
+
+    audio.onended = () => {
+      isPlaying = false;
+      URL.revokeObjectURL(url);
     };
-    recognition.onend = () => {
-      micBtn.classList.remove('recording');
-      audioWave.classList.remove('active');
-    };
-    recognition.onerror = () => {
-      micBtn.classList.remove('recording');
-      audioWave.classList.remove('active');
-    };
+
+    audio.play();
+
+  } catch(e) {
+    console.warn("TTS error", e);
   }
+}
 
-  micBtn.addEventListener('click', () => {
-    if (!recognition) {
-      alert('Speech recognition not supported in this browser. Please type your message.');
-      return;
-    }
-    if (micBtn.classList.contains('recording')) {
-      recognition.stop();
-      micBtn.classList.remove('recording');
-      audioWave.classList.remove('active');
-    } else {
-      recognition.start();
-      micBtn.classList.add('recording');
-      audioWave.classList.add('active');
-    }
-  });
 
-  sendBtn.addEventListener('click', () => sendMessage(input.value));
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
+// ── SEND MESSAGE (FIXED) ──
+async function sendMessage(text) {
+  if (!text.trim()) return;
 
-  // ── AUTO-START GREETING ─────────────────────────────────────────────────────
-  window.addEventListener('load', async () => {
-    await new Promise(r => setTimeout(r, 600));
-    showTyping();
-    await new Promise(r => setTimeout(r, 900));
+  addMsg(text, 'user');
+  input.value = '';
+  showTyping();
+
+  try {
+    const res = await fetch(`${BASE_URL}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        session_id: sessionId
+      })
+    });
+
+    const data = await res.json();
+    sessionId = data.session_id;
+
     hideTyping();
-    const greeting = "Hello! Welcome to Apollo Clinic. Our clinic is open 9 AM to 8 PM, Monday to Saturday. I can help you schedule an appointment with a general physician, dermatologist, or orthopedic specialist. How may I assist you today?";
-    addMsg(greeting, 'agent');
-    speakText(greeting);
+    addMsg(data.response, 'agent');
+    speakText(data.response);
 
-    // Set session so first user reply goes to step get_name
-    try {
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: '__init__', session_id: null })
-      });
-      const data = await res.json();
-      sessionId = data.session_id;
-    } catch(e) {}
-  });
+  } catch(e) {
+    hideTyping();
+    addMsg("Server error. Try again.", "agent");
+  }
+}
+
+
+// ── MIC ──
+let recognition = null;
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  recognition = new SR();
+  recognition.lang = 'en-IN';
+
+  recognition.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    input.value = text;
+    sendMessage(text);
+  };
+
+  recognition.onend = () => {
+    micBtn.classList.remove('recording');
+    audioWave.classList.remove('active');
+  };
+}
+
+micBtn.onclick = () => {
+  if (!recognition) {
+    alert("Voice not supported. Use typing.");
+    return;
+  }
+
+  if (micBtn.classList.contains('recording')) {
+    recognition.stop();
+    micBtn.classList.remove('recording');
+    audioWave.classList.remove('active');
+  } else {
+    recognition.start();
+    micBtn.classList.add('recording');
+    audioWave.classList.add('active');
+  }
+};
+
+
+// ── EVENTS ──
+sendBtn.onclick = () => sendMessage(input.value);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendMessage(input.value);
+});
+
+
+// ── GREETING ──
+window.onload = async () => {
+  await new Promise(r => setTimeout(r, 800));
+
+  const greeting = "Hello! Welcome to Apollo Clinic. How may I assist you today?";
+  addMsg(greeting, 'agent');
+  speakText(greeting);
+
+  try {
+    const res = await fetch(`${BASE_URL}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: "__init__", session_id: null })
+    });
+
+    const data = await res.json();
+    sessionId = data.session_id;
+
+  } catch(e) {}
+};
 </script>
 </body>
 </html>
