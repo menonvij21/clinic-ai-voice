@@ -10,6 +10,8 @@ Clinic hours: 9 AM – 8 PM, Monday to Saturday
 from datetime import datetime, timedelta
 import re
 def parse_time(t):
+    t = t.lower().strip()   # 🔥 ADD THIS LINE HERE
+
     m = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?', t)
     if m:
         h = int(m.group(1))
