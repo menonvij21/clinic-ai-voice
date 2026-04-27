@@ -9,6 +9,15 @@ Clinic hours: 9 AM – 8 PM, Monday to Saturday
 
 from datetime import datetime, timedelta
 import re
+def parse_time(t):
+    m = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?', t)
+    if m:
+        h = int(m.group(1))
+        mn = int(m.group(2)) if m.group(2) else 0
+        p = re.sub(r'\.', '', m.group(3) or '').strip()
+        if p == "pm" and h != 12: h += 12
+        elif p == "am" and h == 12: h = 0
+        return f"{h:02d}:{mn:02d}"
 
 # ─────────────────────────────────────────
 # CLINIC DATA
@@ -310,70 +319,84 @@ def think(user_text: str, memory: dict) -> str:
             f"On {fmt_date(parsed)}, {sess['doctor']} has the following slots open: "
             f"{slot_str}. Which time works best for you?"
         )
+# ── GET SLOT ─────────────────────────────────────────────────────────────
+if sess["step"] == "get_slot":
 
-    # ── GET SLOT ─────────────────────────────────────────────────────────────
-    if sess["step"] == "get_slot":
-        chosen = normalize_slot(text)
-        avail  = sess["available"]
+    avail = sess["available"]
 
-        if chosen in avail:
-            sess["slot"] = chosen
-            sess["step"] = "confirm"
-            return (
-                f"Let me confirm your appointment details:\n\n"
-                f"  Patient   : {sess['name']}\n"
-                f"  Doctor    : {sess['doctor']}\n"
-                f"  Specialty : {sess['specialty'].title()}\n"
-                f"  Date      : {fmt_date(sess['date'])}\n"
-                f"  Time      : {fmt_slot(sess['slot'])}\n\n"
-                "Shall I go ahead and confirm this? Please say yes or no."
-            )
+    # 🔥 normalize user time
+    user_time = parse_time(text)
 
-        # Slot not available — offer next 2 alternatives
-        alternatives = [s for s in avail if s != chosen][:2]
-        if alternatives:
-            alt_str = " or ".join([fmt_slot(s) for s in alternatives])
-            return (
-                f"I'm sorry, {fmt_slot(chosen)} is not available. "
-                f"The next available slots are {alt_str}. Would either of those work for you?"
-            )
+    matched_slot = None
 
-        slot_str = ", ".join([fmt_slot(s) for s in avail[:4]])
+    for slot in avail:
+        slot_time = parse_time(fmt_slot(slot))
+        if slot_time == user_time:
+            matched_slot = slot
+            break
+
+    # ✅ MATCHED
+    if matched_slot:
+        sess["slot"] = matched_slot
+        sess["step"] = "confirm"
+
         return (
-            f"That slot isn't available. Available times are: {slot_str}. "
-            "Which would you prefer?"
+            f"Let me confirm your appointment details:\n\n"
+            f"  Patient   : {sess['name']}\n"
+            f"  Doctor    : {sess['doctor']}\n"
+            f"  Specialty : {sess['specialty'].title()}\n"
+            f"  Date      : {fmt_date(sess['date'])}\n"
+            f"  Time      : {fmt_slot(sess['slot'])}\n\n"
+            "Shall I go ahead and confirm this? Please say yes or no."
         )
 
-    # ── CONFIRM ──────────────────────────────────────────────────────────────
-    if sess["step"] == "confirm":
+    # ❌ NOT MATCHED
+    alternatives = avail[:2]
 
-        if any(x in tl for x in ["yes","confirm","correct","sure","ok","go ahead","please"]):
-            # Save booking
-            book_slot(sess["doctor"], sess["date"], sess["slot"])
-            memory["session"] = get_session()  # reset for next call
+    if alternatives:
+        alt_str = " or ".join([fmt_slot(s) for s in alternatives])
+        return (
+            f"I'm sorry, that time is not available. "
+            f"The next available slots are {alt_str}. Would either of those work for you?"
+        )
 
-            return (
-                f"Wonderful! Your appointment has been confirmed, {sess['name']}. "
-                f"You are scheduled with {sess['doctor']} on {fmt_date(sess['date'])} "
-                f"at {fmt_slot(sess['slot'])}.\n\n"
-                f"{REMINDERS}\n\n"
-                "If you need to reschedule or cancel, please call us at least 2 hours in advance. "
-                "Thank you for choosing Apollo Clinic. We wish you good health. Take care!"
-            )
-
-        if any(x in tl for x in ["no","cancel","wrong","change","different"]):
-            sess["step"] = "get_date"
-            sess["slot"] = None
-            sess["date"] = None
-            return (
-                "No problem! Let's pick a different date or time. "
-                "What date would you prefer?"
-            )
-
-        return "Please say yes to confirm the appointment or no to change the details."
-
-    # ── FALLBACK ─────────────────────────────────────────────────────────────
-    memory["session"] = get_session()
+    slot_str = ", ".join([fmt_slot(s) for s in avail[:4]])
     return (
-        "I apologize, something went wrong on my end. Let's start fresh. " + GREETING
+        f"That slot isn't available. Available times are: {slot_str}. "
+        "Which would you prefer?"
     )
+
+
+# ── CONFIRM ──────────────────────────────────────────────────────────────
+if sess["step"] == "confirm":
+
+    if any(x in tl for x in ["yes","confirm","correct","sure","ok","go ahead","please"]):
+        book_slot(sess["doctor"], sess["date"], sess["slot"])
+        memory["session"] = get_session()
+
+        return (
+            f"Wonderful! Your appointment has been confirmed, {sess['name']}. "
+            f"You are scheduled with {sess['doctor']} on {fmt_date(sess['date'])} "
+            f"at {fmt_slot(sess['slot'])}.\n\n"
+            f"{REMINDERS}\n\n"
+            "If you need to reschedule or cancel, please call us at least 2 hours in advance. "
+            "Thank you for choosing Apollo Clinic. We wish you good health. Take care!"
+        )
+
+    if any(x in tl for x in ["no","cancel","wrong","change","different"]):
+        sess["step"] = "get_date"
+        sess["slot"] = None
+        sess["date"] = None
+        return (
+            "No problem! Let's pick a different date or time. "
+            "What date would you prefer?"
+        )
+
+    return "Please say yes to confirm the appointment or no to change the details."
+
+
+# ── FALLBACK ─────────────────────────────────────────────────────────────
+memory["session"] = get_session()
+return (
+    "I apologize, something went wrong on my end. Let's start fresh. " + GREETING
+)
